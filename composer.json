@@ -1,0 +1,15 @@
+{
+    "name": "mage/view-table",
+    "description": "Magento 2 module to Create generic view flat table ",
+    "require": {
+        "mage/db2": "^1"
+    },
+    "type": "magento2-module",
+    "autoload": {
+        "psr-4": {
+            "Mage\\ViewTable\\": ""
+        }
+    },
+    "version": "1.0.3",
+    "minimum-stability": "stable"
+}
