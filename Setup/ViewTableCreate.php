@@ -33,7 +33,7 @@ abstract class ViewTableCreate implements InstallSchemaInterface
         return "DROP VIEW IF EXISTS " . $this->viewName;
     }
 
-    protected function createTableFromView()
+    public function createTableFromView()
     {
         try {
             // Fetch columns from the view
@@ -57,7 +57,7 @@ abstract class ViewTableCreate implements InstallSchemaInterface
             });
         } catch (QueryException $e) {
             if ($e->getCode() === '42S01') { // Error code for "Table already exists"
-                echo $e->getMessage();
+                // echo $e->getMessage();
             }
         } catch (\Exception $e) {
             // Ignoring Table exist message
@@ -65,10 +65,11 @@ abstract class ViewTableCreate implements InstallSchemaInterface
         }
     }
 
-    public function populateTableFromView($newTableName)
+    public function populateTableFromView()
     {
+        $newTableName = $this->newTableName;
         DB::table($this->viewName)->orderBy('entity_id') // Ensure rows are processed in a consistent order
-            ->chunk(10, function ($rows) use ($newTableName) {
+            ->chunk(50, function ($rows) use ($newTableName) {
                 $insertData = $rows->map(function ($row) {
                     return (array) $row; // Convert object to associative array
                 })->toArray();
@@ -98,7 +99,7 @@ abstract class ViewTableCreate implements InstallSchemaInterface
         // Fetch data from the view table
         DB::table($viewName)
             ->orderBy('entity_id') // Ensure consistent order (adjust based on your view structure)
-            ->chunk(10, function ($rows) {
+            ->chunk(50, function ($rows) {
                 $insertData = $rows->map(function ($row) {
                     return [
                         'id' => $row->entity_id,
@@ -148,7 +149,7 @@ abstract class ViewTableCreate implements InstallSchemaInterface
         $installer->getConnection()->query($this->dropViewSQL()); // Drop the view if it exists
         $installer->getConnection()->query($this->createViewTableFromSelect()); // Create the view
         $this->createTableFromView();
-        //$this->populateTableFromView($this->newTableName);
+        //$this->populateTableFromView();
 
         $installer->endSetup();
     }
