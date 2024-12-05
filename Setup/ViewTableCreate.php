@@ -22,24 +22,31 @@ abstract class ViewTableCreate implements InstallSchemaInterface
         $this->viewName = $name;
     }
 
-    public function createViewTableFromSelect()
+    public function createViewTableFromSelect($sufix = '', $fallback = true, $drop = false)
     {
-        $createViewSql = "CREATE VIEW " . $this->viewName . " AS " . $this->getSelect(false);
+        if ($drop) {
+            $this->dropViewSQL($sufix);
+        }
+        $viewName = trim($this->viewName . "_" . $sufix, '_');
+        $createViewSql = "CREATE VIEW " . $viewName . " AS " . $this->getSelect($sufix, $fallback, false);
         return $createViewSql;
     }
 
-    public function dropViewSQL()
+    public function dropViewSQL($sufix = '')
     {
-        return "DROP VIEW IF EXISTS " . $this->viewName;
+        return "DROP VIEW IF EXISTS " . trim($this->viewName . '_' . $sufix, '_');
     }
 
-    public function createTableFromView()
+    public function createTableFromView($sufix = '', $drop = false)
     {
         try {
             // Fetch columns from the view
             $columns = DB::select("DESCRIBE {$this->viewName}");
-            $newTableName = $this->viewName . "_MVIEW";
+            $newTableName = trim($this->viewName . "_MVIEW_" . $sufix, '_');
             $this->newTableName = $newTableName;
+            if ($drop) {
+                DB::schema()->dropIfExists($newTableName);
+            }
             // Start creating the new table
             DB::schema()->create($newTableName, function (Blueprint $table) use ($columns) {
                 $table->id(); // Add an ID column as the primary key
@@ -65,10 +72,10 @@ abstract class ViewTableCreate implements InstallSchemaInterface
         }
     }
 
-    public function populateTableFromView()
+    public function populateTableFromView($sufix = '')
     {
         $newTableName = $this->newTableName;
-        DB::table($this->viewName)->orderBy('entity_id') // Ensure rows are processed in a consistent order
+        DB::table(trim($this->viewName . '_' . $sufix, '_'))->orderBy('entity_id') // Ensure rows are processed in a consistent order
             ->chunk(50, function ($rows) use ($newTableName) {
                 $insertData = $rows->map(function ($row) {
                     return (array) $row; // Convert object to associative array
@@ -78,8 +85,11 @@ abstract class ViewTableCreate implements InstallSchemaInterface
             });
     }
 
-    public function jsonTableCreate($tableName)
+    public function jsonTableCreate($tableName, $drop = false)
     {
+        if ($drop) {
+            DB::schema()->dropIfExists($tableName);
+        }
         try {
             DB::schema()->create($tableName, function (Blueprint $table) {
                 $table->id(); // Primary key
