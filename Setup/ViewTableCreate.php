@@ -2,11 +2,13 @@
 
 namespace Mage\ViewTable\Setup;
 
+use function Mage\DB2\formatTime;
 use Illuminate\Database\QueryException;
 use Illuminate\Database\Schema\Blueprint;
 use Magento\Framework\Setup\InstallSchemaInterface;
 use Magento\Framework\Setup\ModuleContextInterface;
 use Magento\Framework\Setup\SchemaSetupInterface;
+use Mage\DB2\Async;
 use Mage\DB2\DB2 as DB;
 
 abstract class ViewTableCreate implements InstallSchemaInterface
@@ -64,25 +66,80 @@ abstract class ViewTableCreate implements InstallSchemaInterface
             });
         } catch (QueryException $e) {
             if ($e->getCode() === '42S01') { // Error code for "Table already exists"
+                // Ignoring Table exist message
+
                 // echo $e->getMessage();
             }
         } catch (\Exception $e) {
-            // Ignoring Table exist message
-            echo $e->getMessage();
+            throw $e;
         }
     }
 
-    public function populateTableFromView($sufix = '')
+    public function populateTableFromView($sufix = '', $async = false)
     {
-        $newTableName = $this->newTableName;
-        DB::table(trim($this->viewName . '_' . $sufix, '_'))->orderBy('entity_id') // Ensure rows are processed in a consistent order
-            ->chunk(50, function ($rows) use ($newTableName) {
+        $async = true;
+        $debug = false;
+        $newTableName = trim($this->viewName . '_MVIEW_' . $sufix, '_');
+
+        $start = microtime(true);
+        $limit = 100; // Don't export everething
+        DB::table(trim($this->viewName . '_' . $sufix, '_'))->orderBy('entity_id')->where('entity_id', '<', $limit) // Ensure rows are processed in a consistent order
+            ->chunk(200, function ($rows) use ($newTableName, $async, &$start, $debug) {
+                if ($debug) {
+                    $end = microtime(true);
+                    echo "View SQL Time: " . ($end - $start) . "\n";
+                    $start = microtime(true);
+                }
                 $insertData = $rows->map(function ($row) {
                     return (array) $row; // Convert object to associative array
                 })->toArray();
 
-                DB::table($newTableName)->insert($insertData);
+                if ($async) {
+                    $startAwait = microtime(true);
+                    $result = Async::instance()->asyncAwait();
+                    $endAwait = microtime(true);
+                    if ($debug) {
+                        echo "Async aWait Time: " . $this->formatTime($endAwait - $startAwait) . "\n";
+                    }
+
+                    $chunks = array_chunk($insertData, 100);
+                    if ($debug) {
+                        echo "Chunks count: " . count($chunks) . "\n";
+                    }
+
+                    $insertSQL = [];
+                    foreach ($chunks as $i => $inserts) {
+                        $insertSQL[] = DB::generateInsertQuery($newTableName, $inserts);
+                    }
+
+                    $startSend = microtime(true);
+                    Async::instance()->sendAsync($insertSQL, 10/*, debug: true*/, await: false);
+                    $endSend = microtime(true);
+                    if ($debug) {
+                        echo "Send Async Time: " . $this->formatTime($endSend - $startSend) . "\n";
+                    }
+
+                } else {
+                    DB::table($newTableName)->insert($insertData);
+                }
+                // Edge case for the last loop iteration
+                Async::instance()->asyncAwait();
+                $endInsert = microtime(true);
+                if ($debug) {
+                    echo "View SQL Insert Time: " . $this->formatTime($endInsert - $start) . "\n";
+                }
+                $start = microtime(true);
             });
+    }
+
+    public function gerTableName($sufix)
+    {
+        return trim($this->viewName . '_' . $sufix, '_');
+    }
+
+    public function formatTime($milliseconds)
+    {
+        return formatTime($milliseconds);
     }
 
     public function jsonTableCreate($tableName, $drop = false)
@@ -98,7 +155,7 @@ abstract class ViewTableCreate implements InstallSchemaInterface
                 $table->timestamps(); // Created and updated timestamps
             });
         } catch (\Exception $e) {
-            // DO nothing
+            throw $e;
         }
     }
 
@@ -123,9 +180,12 @@ abstract class ViewTableCreate implements InstallSchemaInterface
                     // Insert chunked data into the _json table
                     DB::table($tableName)->upsert($insertData, ['entity_id'], ['data', 'updated_at']);
                 } catch (\Exception $e) {
-
+                    throw $e;
                 }
             });
+
+        // Check Table size:
+        // SELECT table_name AS "Table",     round(((data_length + index_length) / 1024 / 1024), 2) AS "Size (MB)" FROM      information_schema.TABLES WHERE      table_schema = "***"     AND table_name = "product_json";
         // Retrieve and print the query log
         //$queryLog = DB::connection()->getQueryLog();
         //print_r($queryLog);
